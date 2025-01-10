@@ -150,19 +150,26 @@ func (p *clientStreamProcessorMPEGTS) initializeReader(ctx context.Context, firs
 		p.onDecodeError(err)
 	})
 
+    var supportedTracks []*mpegts.Track
+
 	for _, track := range p.reader.Tracks() {
 		switch track.Codec.(type) {
 		case *mpegts.CodecH264, *mpegts.CodecMPEG4Audio:
+            supportedTracks = append(supportedTracks, track)
 		default:
-			return fmt.Errorf("unsupported track type: %T", track)
+			err = fmt.Errorf("unsupported track type: %T", track)
 		}
 	}
 
-	leadingTrackID := mpegtsPickLeadingTrack(p.reader.Tracks())
+	if len(supportedTracks) == 0 && err != nil {
+		return err
+	}
 
-	tracks := make([]*Track, len(p.reader.Tracks()))
+	leadingTrackID := mpegtsPickLeadingTrack(supportedTracks)
 
-	for i, mpegtsTrack := range p.reader.Tracks() {
+	tracks := make([]*Track, len(supportedTracks))
+
+	for i, mpegtsTrack := range supportedTracks {
 		tracks[i] = &Track{
 			Codec:     codecs.FromMPEGTS(mpegtsTrack.Codec),
 			ClockRate: 90000,
@@ -179,7 +186,7 @@ func (p *clientStreamProcessorMPEGTS) initializeReader(ctx context.Context, firs
 		return fmt.Errorf("terminated")
 	}
 
-	for i, mpegtsTrack := range p.reader.Tracks() {
+	for i, mpegtsTrack := range supportedTracks {
 		track := p.clientStreamTracks[i]
 		isLeadingTrack := (i == leadingTrackID)
 		var trackProc *clientTrackProcessorMPEGTS
