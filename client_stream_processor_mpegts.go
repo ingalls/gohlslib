@@ -9,7 +9,7 @@ import (
 
 	"github.com/asticode/go-astits"
 
-	"github.com/bluenviron/mediacommon/pkg/formats/mpegts"
+	"github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
 
 	"github.com/bluenviron/gohlslib/v2/pkg/codecs"
 )
@@ -26,6 +26,10 @@ func mpegtsPickLeadingTrack(mpegtsTracks []*mpegts.Track) int {
 	return 0
 }
 
+func leadingTimeConvMPEGTS(client clientStreamDownloaderClient) *clientTimeConvMPEGTS {
+	return client.getLeadingTimeConv().(*clientTimeConvMPEGTS)
+}
+
 type switchableReader struct {
 	r io.Reader
 }
@@ -34,20 +38,22 @@ func (r *switchableReader) Read(p []byte) (int, error) {
 	return r.r.Read(p)
 }
 
+type clientStreamProcessorStreamDownloader interface {
+	setTracks(ctx context.Context, tracks []*Track) ([]*clientTrack, bool)
+	setEnded()
+}
+
 type clientStreamProcessorMPEGTS struct {
-	onDecodeError      ClientOnDecodeErrorFunc
-	isLeading          bool
-	segmentQueue       *clientSegmentQueue
-	rp                 *clientRoutinePool
-	setTracks          func(ctx context.Context, tracks []*Track) ([]*clientTrack, bool)
-	setEnded           func()
-	setLeadingTimeConv func(clientTimeConv)
-	getLeadingTimeConv func(context.Context) (clientTimeConv, bool)
+	onDecodeError    ClientOnDecodeErrorFunc
+	isLeading        bool
+	segmentQueue     *clientSegmentQueue
+	rp               *clientRoutinePool
+	streamDownloader clientStreamProcessorStreamDownloader
+	client           clientStreamDownloaderClient
 
 	switchableReader   *switchableReader
 	reader             *mpegts.Reader
 	trackProcessors    map[*Track]*clientTrackProcessorMPEGTS
-	timeConv           *clientTimeConvMPEGTS
 	curSegment         *segmentData
 	leadingTrackFound  bool
 	dateTimeProcessed  bool
@@ -76,7 +82,7 @@ func (p *clientStreamProcessorMPEGTS) run(ctx context.Context) error {
 
 func (p *clientStreamProcessorMPEGTS) processSegment(ctx context.Context, seg *segmentData) error {
 	if seg == nil {
-		p.setEnded()
+		p.streamDownloader.setEnded()
 		<-ctx.Done()
 		return fmt.Errorf("terminated")
 	}
@@ -140,8 +146,8 @@ func (p *clientStreamProcessorMPEGTS) onPartProcessorDone(ctx context.Context) {
 func (p *clientStreamProcessorMPEGTS) initializeReader(ctx context.Context, firstPayload []byte) error {
 	p.switchableReader = &switchableReader{bytes.NewReader(firstPayload)}
 
-	var err error
-	p.reader, err = mpegts.NewReader(p.switchableReader)
+	p.reader = &mpegts.Reader{R: p.switchableReader}
+	err := p.reader.Initialize()
 	if err != nil {
 		return err
 	}
@@ -179,7 +185,7 @@ func (p *clientStreamProcessorMPEGTS) initializeReader(ctx context.Context, firs
 	}
 
 	var ok bool
-	p.clientStreamTracks, ok = p.setTracks(ctx, tracks)
+	p.clientStreamTracks, ok = p.streamDownloader.setTracks(ctx, tracks)
 	if !ok {
 		return fmt.Errorf("terminated")
 	}
@@ -210,19 +216,19 @@ func (p *clientStreamProcessorMPEGTS) initializeReader(ctx context.Context, firs
 				}
 			}
 
-			pts := p.timeConv.convert(rawPTS)
-			dts := p.timeConv.convert(rawDTS)
+			pts := leadingTimeConvMPEGTS(p.client).convert(rawPTS)
+			dts := leadingTimeConvMPEGTS(p.client).convert(rawDTS)
 
 			if !p.dateTimeProcessed && p.isLeading && isLeadingTrack {
 				p.dateTimeProcessed = true
 
 				if p.curSegment.dateTime != nil {
-					p.timeConv.setNTP(*p.curSegment.dateTime, dts)
+					leadingTimeConvMPEGTS(p.client).setNTP(*p.curSegment.dateTime, dts)
 				}
-				p.timeConv.setLeadingNTPReceived()
+				leadingTimeConvMPEGTS(p.client).setLeadingNTPReceived()
 			}
 
-			ntp := p.timeConv.getNTP(ctx, dts)
+			ntp := leadingTimeConvMPEGTS(p.client).getNTP(ctx, dts)
 
 			return trackProc.push(ctx, &procEntryMPEGTS{
 				pts:  pts,
@@ -253,19 +259,19 @@ func (p *clientStreamProcessorMPEGTS) initializeTrackProcessors(
 	dts int64,
 ) error {
 	if p.isLeading {
-		p.timeConv = &clientTimeConvMPEGTS{
+		timeConv := &clientTimeConvMPEGTS{
 			startDTS: dts,
 		}
-		p.timeConv.initialize()
+		timeConv.initialize()
 
-		p.setLeadingTimeConv(p.timeConv)
+		p.client.setLeadingTimeConv(timeConv)
 	} else {
-		rawTS, ok := p.getLeadingTimeConv(ctx)
+		ok := p.client.waitLeadingTimeConv(ctx)
 		if !ok {
 			return fmt.Errorf("terminated")
 		}
 
-		p.timeConv, ok = rawTS.(*clientTimeConvMPEGTS)
+		_, ok = p.client.getLeadingTimeConv().(*clientTimeConvMPEGTS)
 		if !ok {
 			return fmt.Errorf("stream playlists are mixed MPEGTS/FMP4")
 		}
@@ -275,8 +281,8 @@ func (p *clientStreamProcessorMPEGTS) initializeTrackProcessors(
 
 	for _, track := range p.clientStreamTracks {
 		proc := &clientTrackProcessorMPEGTS{
-			track:               track,
-			onPartProcessorDone: p.onPartProcessorDone,
+			track:           track,
+			streamProcessor: p,
 		}
 		proc.initialize()
 		p.rp.add(proc)

@@ -337,8 +337,8 @@ func (m *Muxer) Start() error {
 		nextSegmentID = 7
 	}
 
-	switch {
-	case m.Variant == MuxerVariantMPEGTS:
+	switch m.Variant {
+	case MuxerVariantMPEGTS:
 		stream := &muxerStream{
 			isLeading:      true,
 			variant:        m.Variant,
@@ -354,7 +354,10 @@ func (m *Muxer) Start() error {
 			id:             "main",
 			nextSegmentID:  nextSegmentID,
 		}
-		stream.initialize()
+		err := stream.initialize()
+		if err != nil {
+			return err
+		}
 		m.streams = append(m.streams, stream)
 
 	default:
@@ -408,7 +411,10 @@ func (m *Muxer) Start() error {
 				isDefault:      isDefault,
 				nextSegmentID:  nextSegmentID,
 			}
-			stream.initialize()
+			err := stream.initialize()
+			if err != nil {
+				return err
+			}
 			m.streams = append(m.streams, stream)
 		}
 	}
@@ -428,14 +434,16 @@ func (m *Muxer) Start() error {
 // Close closes a Muxer.
 func (m *Muxer) Close() {
 	m.mutex.Lock()
-	m.closed = true
-	m.mutex.Unlock()
 
-	m.cond.Broadcast()
+	m.closed = true
 
 	for _, stream := range m.streams {
 		stream.close()
 	}
+
+	m.mutex.Unlock()
+
+	m.cond.Broadcast()
 }
 
 // WriteAV1 writes an AV1 temporal unit.

@@ -1,5 +1,6 @@
 //go:build cgo
 
+// Package main contains an example.
 package main
 
 import (
@@ -122,5 +123,5 @@ func main() {
 	defer c.Close()
 
 	// wait for a fatal error
-	panic(<-c.Wait())
+	panic(c.Wait2())
 }

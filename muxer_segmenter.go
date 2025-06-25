@@ -6,13 +6,13 @@ import (
 	"time"
 
 	"github.com/bluenviron/gohlslib/v2/pkg/codecs"
-	"github.com/bluenviron/mediacommon/pkg/codecs/av1"
-	"github.com/bluenviron/mediacommon/pkg/codecs/h264"
-	"github.com/bluenviron/mediacommon/pkg/codecs/h265"
-	"github.com/bluenviron/mediacommon/pkg/codecs/mpeg4audio"
-	"github.com/bluenviron/mediacommon/pkg/codecs/opus"
-	"github.com/bluenviron/mediacommon/pkg/codecs/vp9"
-	"github.com/bluenviron/mediacommon/pkg/formats/fmp4"
+	"github.com/bluenviron/mediacommon/v2/pkg/codecs/av1"
+	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h264"
+	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h265"
+	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
+	"github.com/bluenviron/mediacommon/v2/pkg/codecs/opus"
+	"github.com/bluenviron/mediacommon/v2/pkg/codecs/vp9"
+	"github.com/bluenviron/mediacommon/v2/pkg/formats/fmp4"
 )
 
 func multiplyAndDivide(v, m, d int64) int64 {
@@ -72,7 +72,7 @@ func findCompatiblePartDuration(
 }
 
 type fmp4AugmentedSample struct {
-	fmp4.PartSample
+	fmp4.Sample
 	dts int64
 	ntp time.Time
 }
@@ -133,9 +133,8 @@ func (s *muxerSegmenter) writeAV1(
 		paramsChanged = true
 	}
 
-	ps, err := fmp4.NewPartSampleAV1(
-		randomAccess,
-		tu)
+	ps := &fmp4.Sample{}
+	err := ps.FillAV1(tu)
 	if err != nil {
 		return err
 	}
@@ -145,9 +144,9 @@ func (s *muxerSegmenter) writeAV1(
 		randomAccess,
 		paramsChanged,
 		&fmp4AugmentedSample{
-			PartSample: *ps,
-			dts:        pts,
-			ntp:        ntp,
+			Sample: *ps,
+			dts:    pts,
+			ntp:    ntp,
 		})
 }
 
@@ -214,7 +213,7 @@ func (s *muxerSegmenter) writeVP9(
 		randomAccess,
 		paramsChanged,
 		&fmp4AugmentedSample{
-			PartSample: fmp4.PartSample{
+			Sample: fmp4.Sample{
 				IsNonSyncSample: !randomAccess,
 				Payload:         frame,
 			},
@@ -272,7 +271,8 @@ func (s *muxerSegmenter) writeH265(
 		}
 		track.firstRandomAccessReceived = true
 
-		track.h265DTSExtractor = h265.NewDTSExtractor2()
+		track.h265DTSExtractor = &h265.DTSExtractor{}
+		track.h265DTSExtractor.Initialize()
 	}
 
 	dts, err := track.h265DTSExtractor.Extract(au, pts)
@@ -280,9 +280,9 @@ func (s *muxerSegmenter) writeH265(
 		return fmt.Errorf("unable to extract DTS: %w", err)
 	}
 
-	ps, err := fmp4.NewPartSampleH26x(
+	ps := &fmp4.Sample{}
+	err = ps.FillH265(
 		int32(pts-dts),
-		randomAccess,
 		au)
 	if err != nil {
 		return err
@@ -293,9 +293,9 @@ func (s *muxerSegmenter) writeH265(
 		randomAccess,
 		paramsChanged,
 		&fmp4AugmentedSample{
-			PartSample: *ps,
-			dts:        dts,
-			ntp:        ntp,
+			Sample: *ps,
+			dts:    dts,
+			ntp:    ntp,
 		})
 }
 
@@ -350,7 +350,8 @@ func (s *muxerSegmenter) writeH264(
 		}
 		track.firstRandomAccessReceived = true
 
-		track.h264DTSExtractor = h264.NewDTSExtractor2()
+		track.h264DTSExtractor = &h264.DTSExtractor{}
+		track.h264DTSExtractor.Initialize()
 	}
 
 	dts, err := track.h264DTSExtractor.Extract(au, pts)
@@ -387,9 +388,9 @@ func (s *muxerSegmenter) writeH264(
 		return nil
 	}
 
-	ps, err := fmp4.NewPartSampleH26x(
+	ps := &fmp4.Sample{}
+	err = ps.FillH264(
 		int32(pts-dts),
-		randomAccess,
 		au)
 	if err != nil {
 		return err
@@ -400,9 +401,9 @@ func (s *muxerSegmenter) writeH264(
 		randomAccess,
 		paramsChanged,
 		&fmp4AugmentedSample{
-			PartSample: *ps,
-			dts:        dts,
-			ntp:        ntp,
+			Sample: *ps,
+			dts:    dts,
+			ntp:    ntp,
 		})
 }
 
@@ -418,7 +419,7 @@ func (s *muxerSegmenter) writeOpus(
 			true,
 			false,
 			&fmp4AugmentedSample{
-				PartSample: fmp4.PartSample{
+				Sample: fmp4.Sample{
 					Payload: packet,
 				},
 				dts: pts,
@@ -429,9 +430,9 @@ func (s *muxerSegmenter) writeOpus(
 			return err
 		}
 
-		duration := opus.PacketDuration(packet)
-		ntp = ntp.Add(duration)
-		pts += durationToTimestamp(duration, track.ClockRate)
+		deltaT := opus.PacketDuration2(packet)
+		ntp = ntp.Add(timestampToDuration(deltaT, 48000))
+		pts += deltaT
 	}
 
 	return nil
@@ -473,7 +474,7 @@ func (s *muxerSegmenter) writeMPEG4Audio(
 		return nil
 	}
 
-	sampleRate := track.Codec.(*codecs.MPEG4Audio).Config.SampleRate
+	sampleRate := track.Codec.(*codecs.MPEG4Audio).SampleRate
 
 	for i, au := range aus {
 		auNTP := ntp.Add(time.Duration(i) * mpeg4audio.SamplesPerAccessUnit *
@@ -486,7 +487,7 @@ func (s *muxerSegmenter) writeMPEG4Audio(
 			true,
 			false,
 			&fmp4AugmentedSample{
-				PartSample: fmp4.PartSample{
+				Sample: fmp4.Sample{
 					Payload: au,
 				},
 				dts: auPTS,
@@ -531,9 +532,9 @@ func (s *muxerSegmenter) fmp4WriteSample(
 	// add a starting DTS to avoid a negative BaseTime
 	sample.dts += durationToTimestamp(fmp4StartDTS, track.ClockRate)
 
-	// BaseTime is still negative, this is not supported by fMP4. Reject the sample silently.
+	// BaseTime is still negative, this is not supported by fMP4
 	if sample.dts < 0 {
-		return nil
+		return fmt.Errorf("sample timestamp is impossible to handle")
 	}
 
 	// put samples into a queue in order to compute the sample duration

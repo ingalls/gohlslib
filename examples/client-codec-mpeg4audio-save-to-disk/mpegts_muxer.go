@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"os"
 
-	"github.com/bluenviron/mediacommon/pkg/codecs/mpeg4audio"
-	"github.com/bluenviron/mediacommon/pkg/formats/mpegts"
+	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
+	"github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
 )
 
 // mpegtsMuxer allows to save a MPEG4-audio stream into a MPEG-TS file.
@@ -34,14 +34,21 @@ func (e *mpegtsMuxer) initialize() error {
 		},
 	}
 
-	e.w = mpegts.NewWriter(e.b, []*mpegts.Track{e.track})
+	e.w = &mpegts.Writer{
+		W:      e.b,
+		Tracks: []*mpegts.Track{e.track},
+	}
+	err = e.w.Initialize()
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
 
 // close closes all the mpegtsMuxer resources.
 func (e *mpegtsMuxer) close() {
-	e.b.Flush()
+	e.b.Flush() //nolint:errcheck
 	e.f.Close()
 }
 

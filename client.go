@@ -16,11 +16,9 @@ import (
 )
 
 const (
-	clientMaxTracksPerStream     = 10
-	clientMPEGTSSampleQueueSize  = 100
-	clientLiveInitialDistance    = 3
-	clientLiveMaxDistanceFromEnd = 5
-	clientMaxDTSRTCDiff          = 10 * time.Second
+	clientMaxTracksPerStream    = 10
+	clientMPEGTSSampleQueueSize = 100
+	clientMaxDTSRTCDiff         = 10 * time.Second
 )
 
 // ErrClientEOS is returned by Wait() when the stream has ended.
@@ -77,6 +75,14 @@ type Client struct {
 	//
 	// URI of the playlist.
 	URI string
+	// Start distance from the end of the playlist,
+	// expressed as number of segments.
+	// It defaults to 3.
+	StartDistance int
+	// Maximum distance from the end of the playlist,
+	// expressed as number of segments.
+	// It defaults to 5.
+	MaxDistance int
 	// HTTP client.
 	// It defaults to http.DefaultClient.
 	HTTPClient *http.Client
@@ -109,14 +115,21 @@ type Client struct {
 	primaryDownloader *clientPrimaryDownloader
 	leadingTimeConv   clientTimeConv
 	tracks            map[*Track]*clientTrack
+	closeError        error
 
 	// out
-	outErr               chan error
+	done                 chan struct{}
 	leadingTimeConvReady chan struct{}
 }
 
 // Start starts the client.
 func (c *Client) Start() error {
+	if c.StartDistance == 0 {
+		c.StartDistance = 3
+	}
+	if c.MaxDistance == 0 {
+		c.MaxDistance = 5
+	}
 	if c.HTTPClient == nil {
 		c.HTTPClient = http.DefaultClient
 	}
@@ -162,7 +175,7 @@ func (c *Client) Start() error {
 
 	c.ctx, c.ctxCancel = context.WithCancel(context.Background())
 
-	c.outErr = make(chan error, 1)
+	c.done = make(chan struct{})
 	c.leadingTimeConvReady = make(chan struct{})
 
 	go c.run()
@@ -170,14 +183,29 @@ func (c *Client) Start() error {
 	return nil
 }
 
-// Close closes all the Client resources.
+// Close closes all the Client resources and waits for them to exit.
 func (c *Client) Close() {
 	c.ctxCancel()
+	<-c.done
 }
 
 // Wait waits for any error of the Client.
+//
+// Deprecated: replaced by Wait2.
 func (c *Client) Wait() chan error {
-	return c.outErr
+	ch := make(chan error)
+	go func() {
+		<-c.done
+		ch <- c.closeError
+	}()
+	return ch
+}
+
+// Wait2 waits until all client resources are closed.
+// This can happen when a fatal error occurs or when Close() is called.
+func (c *Client) Wait2() error {
+	<-c.done
+	return c.closeError
 }
 
 // OnDataAV1 sets a callback that is called when data from an AV1 track is received.
@@ -223,7 +251,8 @@ func (c *Client) AbsoluteTime(track *Track) (time.Time, bool) {
 }
 
 func (c *Client) run() {
-	c.outErr <- c.runInner()
+	c.closeError = c.runInner()
+	close(c.done)
 }
 
 func (c *Client) runInner() error {
@@ -232,17 +261,17 @@ func (c *Client) runInner() error {
 
 	c.primaryDownloader = &clientPrimaryDownloader{
 		primaryPlaylistURL:        c.playlistURL,
+		startDistance:             c.StartDistance,
+		maxDistance:               c.MaxDistance,
 		httpClient:                c.HTTPClient,
+		rp:                        rp,
 		onRequest:                 c.OnRequest,
 		onDownloadPrimaryPlaylist: c.OnDownloadPrimaryPlaylist,
 		onDownloadStreamPlaylist:  c.OnDownloadStreamPlaylist,
 		onDownloadSegment:         c.OnDownloadSegment,
 		onDownloadPart:            c.OnDownloadPart,
 		onDecodeError:             c.OnDecodeError,
-		rp:                        rp,
-		setTracks:                 c.setTracks,
-		setLeadingTimeConv:        c.setLeadingTimeConv,
-		getLeadingTimeConv:        c.getLeadingTimeConv,
+		client:                    c,
 	}
 	c.primaryDownloader.initialize()
 	rp.add(c.primaryDownloader)
@@ -287,11 +316,15 @@ func (c *Client) setLeadingTimeConv(ts clientTimeConv) {
 	close(c.leadingTimeConvReady)
 }
 
-func (c *Client) getLeadingTimeConv(ctx context.Context) (clientTimeConv, bool) {
+func (c *Client) waitLeadingTimeConv(ctx context.Context) bool {
 	select {
 	case <-c.leadingTimeConvReady:
 	case <-ctx.Done():
-		return nil, false
+		return false
 	}
-	return c.leadingTimeConv, true
+	return true
+}
+
+func (c *Client) getLeadingTimeConv() clientTimeConv {
+	return c.leadingTimeConv
 }

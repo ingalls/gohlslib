@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/bluenviron/gohlslib/v2/pkg/storage"
-	"github.com/bluenviron/mediacommon/pkg/formats/mpegts"
+	"github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
 )
 
 type muxerSegmentMPEGTS struct {
@@ -25,7 +25,7 @@ type muxerSegmentMPEGTS struct {
 	bw           *bufio.Writer
 	size         uint64
 	path         string
-	endDTS       time.Duration
+	endDTS       time.Duration // available after finalize()
 	audioAUCount int
 }
 
@@ -77,6 +77,7 @@ func (s *muxerSegmentMPEGTS) finalize(endDTS time.Duration) error {
 	s.bw = nil
 	s.storage.Finalize()
 	s.endDTS = endDTS
+
 	return nil
 }
 
@@ -95,7 +96,7 @@ func (s *muxerSegmentMPEGTS) writeH264(
 	}
 	s.size += size
 
-	err := s.mpegtsWriter.WriteH2642(
+	err := s.mpegtsWriter.WriteH264(
 		track.mpegtsTrack,
 		multiplyAndDivide(pts, 90000, int64(track.ClockRate)),
 		multiplyAndDivide(dts, 90000, int64(track.ClockRate)),
@@ -104,8 +105,6 @@ func (s *muxerSegmentMPEGTS) writeH264(
 	if err != nil {
 		return err
 	}
-
-	s.endDTS = timestampToDuration(dts, track.ClockRate)
 
 	return nil
 }
@@ -136,7 +135,6 @@ func (s *muxerSegmentMPEGTS) writeMPEG4Audio(
 
 	if track.isLeading {
 		s.audioAUCount++
-		s.endDTS = timestampToDuration(pts, track.ClockRate)
 	}
 
 	return nil

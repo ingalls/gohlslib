@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/bluenviron/gohlslib/v2/pkg/storage"
-	"github.com/bluenviron/mediacommon/pkg/formats/fmp4"
+	"github.com/bluenviron/mediacommon/v2/pkg/formats/fmp4"
 )
 
 type muxerPart struct {
@@ -21,7 +21,7 @@ type muxerPart struct {
 
 	path          string
 	isIndependent bool
-	endDTS        time.Duration
+	endDTS        time.Duration // available after finalize()
 }
 
 func (p *muxerPart) initialize() {
@@ -78,7 +78,7 @@ func (p *muxerPart) writeSample(track *muxerTrack, sample *fmp4AugmentedSample) 
 		p.isIndependent = true
 	}
 
-	track.fmp4Samples = append(track.fmp4Samples, &sample.PartSample)
+	track.fmp4Samples = append(track.fmp4Samples, &sample.Sample)
 
 	return nil
 }

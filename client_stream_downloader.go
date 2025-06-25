@@ -49,8 +49,16 @@ func dateTimeOfPreloadHint(pl *playlist.Media) *time.Time {
 	return &d
 }
 
+type clientStreamDownloaderClient interface {
+	setLeadingTimeConv(ts clientTimeConv)
+	waitLeadingTimeConv(ctx context.Context) bool
+	getLeadingTimeConv() clientTimeConv
+}
+
 type clientStreamDownloader struct {
 	isLeading                bool
+	startDistance            int
+	maxDistance              int
 	httpClient               *http.Client
 	onRequest                ClientOnRequestFunc
 	onDownloadStreamPlaylist ClientOnDownloadStreamPlaylistFunc
@@ -61,8 +69,7 @@ type clientStreamDownloader struct {
 	rendition                *playlist.MultivariantRendition
 	firstPlaylist            *playlist.Media
 	rp                       *clientRoutinePool
-	setLeadingTimeConv       func(clientTimeConv)
-	getLeadingTimeConv       func(context.Context) (clientTimeConv, bool)
+	client                   clientStreamDownloaderClient
 
 	segmentQueue *clientSegmentQueue
 	curSegmentID *int
@@ -104,29 +111,25 @@ func (d *clientStreamDownloader) run(ctx context.Context) error {
 		}
 
 		proc := &clientStreamProcessorFMP4{
-			ctx:                ctx,
-			isLeading:          d.isLeading,
-			rendition:          d.rendition,
-			initFile:           initFile,
-			segmentQueue:       d.segmentQueue,
-			rp:                 d.rp,
-			setTracks:          d.setTracks,
-			setEnded:           d.setEnded,
-			setLeadingTimeConv: d.setLeadingTimeConv,
-			getLeadingTimeConv: d.getLeadingTimeConv,
+			ctx:              ctx,
+			isLeading:        d.isLeading,
+			rendition:        d.rendition,
+			initFile:         initFile,
+			segmentQueue:     d.segmentQueue,
+			rp:               d.rp,
+			streamDownloader: d,
+			client:           d.client,
 		}
 		proc.initialize()
 		d.rp.add(proc)
 	} else {
 		proc := &clientStreamProcessorMPEGTS{
-			onDecodeError:      d.onDecodeError,
-			isLeading:          d.isLeading,
-			segmentQueue:       d.segmentQueue,
-			rp:                 d.rp,
-			setTracks:          d.setTracks,
-			setEnded:           d.setEnded,
-			setLeadingTimeConv: d.setLeadingTimeConv,
-			getLeadingTimeConv: d.getLeadingTimeConv,
+			onDecodeError:    d.onDecodeError,
+			isLeading:        d.isLeading,
+			segmentQueue:     d.segmentQueue,
+			rp:               d.rp,
+			streamDownloader: d,
+			client:           d.client,
 		}
 		proc.initialize()
 		d.rp.add(proc)
@@ -321,7 +324,7 @@ func (d *clientStreamDownloader) fillSegmentQueue(
 			seg = pl.Segments[0]
 		} else {
 			// live stream: start from clientLiveInitialDistance
-			seg, segPos = findSegmentWithInvPosition(pl.Segments, clientLiveInitialDistance)
+			seg, segPos = findSegmentWithInvPosition(pl.Segments, d.startDistance)
 			if seg == nil {
 				return fmt.Errorf("there aren't enough segments to fill the buffer")
 			}
@@ -333,7 +336,7 @@ func (d *clientStreamDownloader) fillSegmentQueue(
 			return fmt.Errorf("next segment not found or not ready yet")
 		}
 
-		if !pl.Endlist && invPos > clientLiveMaxDistanceFromEnd {
+		if !pl.Endlist && invPos > d.maxDistance {
 			return fmt.Errorf("playback is too late")
 		}
 	}
