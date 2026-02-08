@@ -516,6 +516,15 @@ func (m *Muxer) WriteKLV(
 	pts int64,
 	data []byte,
 ) error {
+	// KLV writing is currently only supported for the MPEG-TS muxer variant.
+	if m.Variant != MuxerVariantMPEGTS {
+		return fmt.Errorf("WriteKLV is only supported with the MPEG-TS muxer variant")
+	}
+
+	// Ensure that the provided track carries KLV data.
+	if _, ok := track.Codec.(*codecs.KLV); !ok {
+		return fmt.Errorf("WriteKLV called with a non-KLV track")
+	}
 	return m.segmenter.writeKLV(m.mtracksByTrack[track], ntp, pts, data)
 }
 
