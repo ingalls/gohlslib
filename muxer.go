@@ -246,6 +246,8 @@ func (m *Muxer) Start() error {
 						"the MPEG-TS variant of HLS supports H264 video only")
 				}
 				hasVideo = true
+			} else if _, ok := track.Codec.(*codecs.KLV); ok {
+				// KLV data track, allowed in MPEG-TS variant
 			} else {
 				if hasAudio {
 					return fmt.Errorf("the MPEG-TS variant of HLS supports a single audio track only")
@@ -505,6 +507,16 @@ func (m *Muxer) WriteMPEG4Audio(
 	aus [][]byte,
 ) error {
 	return m.segmenter.writeMPEG4Audio(m.mtracksByTrack[track], ntp, pts, aus)
+}
+
+// WriteKLV writes KLV data.
+func (m *Muxer) WriteKLV(
+	track *Track,
+	ntp time.Time,
+	pts int64,
+	data []byte,
+) error {
+	return m.segmenter.writeKLV(m.mtracksByTrack[track], ntp, pts, data)
 }
 
 // Handle handles a HTTP request.
