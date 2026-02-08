@@ -320,38 +320,27 @@ func (m *Muxer) Start() error {
 
 	m.server.registerPath("index.m3u8", m.handleMultivariantPlaylist)
 
+	// Find the leading track index
+	// Video tracks are preferred; if no video, use the first non-KLV track
+	leadingTrackIndex := -1
 	for i, track := range m.Tracks {
-		// Determine if this track should be the leading track
-		// Video tracks are always leading; if no video, the first audio track is leading
-		// KLV tracks are never leading as they don't drive segment creation
-		isLeading := false
 		if track.Codec.IsVideo() {
-			isLeading = true
-		} else if !hasVideo && i == 0 {
-			// First track is leading only if it's not KLV
-			_, isKLV := track.Codec.(*codecs.KLV)
-			isLeading = !isKLV
-		} else if !hasVideo {
-			// If first track was KLV, find the first non-KLV track
+			leadingTrackIndex = i
+			break
+		}
+		if leadingTrackIndex == -1 {
 			_, isKLV := track.Codec.(*codecs.KLV)
 			if !isKLV {
-				// Check if any earlier tracks were non-KLV
-				hasEarlierNonKLV := false
-				for j := 0; j < i; j++ {
-					_, earlierIsKLV := m.Tracks[j].Codec.(*codecs.KLV)
-					if !earlierIsKLV && !m.Tracks[j].Codec.IsVideo() {
-						hasEarlierNonKLV = true
-						break
-					}
-				}
-				isLeading = !hasEarlierNonKLV
+				leadingTrackIndex = i
 			}
 		}
+	}
 
+	for i, track := range m.Tracks {
 		mtrack := &muxerTrack{
 			Track:     track,
 			variant:   m.Variant,
-			isLeading: isLeading,
+			isLeading: i == leadingTrackIndex,
 		}
 		mtrack.initialize()
 		m.mtracks = append(m.mtracks, mtrack)

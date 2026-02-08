@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/asticode/go-astits"
+	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
 	"github.com/stretchr/testify/require"
 
 	"github.com/bluenviron/gohlslib/v2/pkg/codecs"
@@ -146,10 +147,17 @@ Codec:     &codecs.KLV{},
 ClockRate: 90000,
 }
 
-audioTrack := &Track{
-Codec:     &codecs.MPEG4Audio{},
-ClockRate: 48000,
-}
+	audioTrack := &Track{
+		Codec: &codecs.MPEG4Audio{
+			Config: mpeg4audio.AudioSpecificConfig{
+				Type:          2,
+				SampleRate:    44100,
+				ChannelConfig: 2,
+				ChannelCount:  2,
+			},
+		},
+		ClockRate: 44100,
+	}
 
 m := &Muxer{
 Variant:            MuxerVariantMPEGTS,
@@ -162,7 +170,7 @@ err := m.Start()
 require.NoError(t, err)
 defer m.Close()
 
-// Verify that the audio track is the leading track, not KLV
-require.False(t, m.mtracksByTrack[klvTrack].isLeading, "KLV track should not be leading")
-require.True(t, m.mtracksByTrack[audioTrack].isLeading, "Audio track should be leading")
+	// Verify that the audio track is the leading track, not KLV
+	require.False(t, m.mtracksByTrack[klvTrack].isLeading, "KLV track should not be leading")
+	require.True(t, m.mtracksByTrack[audioTrack].isLeading, "Audio track should be leading")
 }
