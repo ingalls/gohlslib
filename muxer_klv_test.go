@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/asticode/go-astits"
+	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
 	"github.com/stretchr/testify/require"
 
 	"github.com/bluenviron/gohlslib/v2/pkg/codecs"
@@ -120,4 +121,56 @@ func TestMuxerKLV(t *testing.T) {
 
 	require.True(t, foundKLVPID, "KLV PID was not found in PMT")
 	require.True(t, foundKLVData, "KLV data was not found in the segment")
+}
+
+func TestMuxerKLVOnlyTrackRejected(t *testing.T) {
+	klvTrack := &Track{
+		Codec:     &codecs.KLV{},
+		ClockRate: 90000,
+	}
+
+	m := &Muxer{
+		Variant:            MuxerVariantMPEGTS,
+		SegmentCount:       3,
+		SegmentMinDuration: 1 * time.Second,
+		Tracks:             []*Track{klvTrack},
+	}
+
+	err := m.Start()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "KLV tracks require at least one video or audio track")
+}
+
+func TestMuxerKLVFirstTrackWithAudio(t *testing.T) {
+	klvTrack := &Track{
+		Codec:     &codecs.KLV{},
+		ClockRate: 90000,
+	}
+
+	audioTrack := &Track{
+		Codec: &codecs.MPEG4Audio{
+			Config: mpeg4audio.AudioSpecificConfig{
+				Type:          2,
+				SampleRate:    44100,
+				ChannelConfig: 2,
+				ChannelCount:  2,
+			},
+		},
+		ClockRate: 44100,
+	}
+
+	m := &Muxer{
+		Variant:            MuxerVariantMPEGTS,
+		SegmentCount:       3,
+		SegmentMinDuration: 1 * time.Second,
+		Tracks:             []*Track{klvTrack, audioTrack},
+	}
+
+	err := m.Start()
+	require.NoError(t, err)
+	defer m.Close()
+
+	// Verify that the audio track is the leading track, not KLV
+	require.False(t, m.mtracksByTrack[klvTrack].isLeading, "KLV track should not be leading")
+	require.True(t, m.mtracksByTrack[audioTrack].isLeading, "Audio track should be leading")
 }
