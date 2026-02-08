@@ -505,7 +505,7 @@ func (s *muxerSegmenter) writeKLV(
 	data []byte,
 ) error {
 	if s.variant != MuxerVariantMPEGTS {
-		return fmt.Errorf("KLV tracks are only supported with MPEGTS muxer variant")
+		return fmt.Errorf("KLV tracks are only supported with MPEG-TS muxer variant")
 	}
 
 	// wait for the leading track to create the first segment
