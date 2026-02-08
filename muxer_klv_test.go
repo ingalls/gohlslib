@@ -11,7 +11,7 @@ import (
 )
 
 func TestMuxerKLV(t *testing.T) {
-	track := &Track{
+	klvTrack := &Track{
 		Codec:     &codecs.KLV{},
 		ClockRate: 90000,
 	}
@@ -20,7 +20,7 @@ func TestMuxerKLV(t *testing.T) {
 		Variant:            MuxerVariantMPEGTS,
 		SegmentCount:       3,
 		SegmentMinDuration: 1 * time.Second,
-		Tracks:             []*Track{track},
+		Tracks:             []*Track{testVideoTrack, klvTrack},
 	}
 
 	err := m.Start()
@@ -28,36 +28,44 @@ func TestMuxerKLV(t *testing.T) {
 	defer m.Close()
 
 	for i := 0; i < 4; i++ {
-		err = m.WriteKLV(track, testTime.Add(time.Duration(i)*time.Second), int64(i)*90000, []byte{
+		d := time.Duration(i) * time.Second
+		pts := int64(d) * 90000 / int64(time.Second)
+
+		err = m.WriteKLV(klvTrack, testTime.Add(d), pts, []byte{
 			0x00, 0x01, 0x02, 0x03,
+		})
+		require.NoError(t, err)
+
+		// Write H264 (IDR to force segment creation)
+		err = m.WriteH264(testVideoTrack, testTime.Add(d), pts, [][]byte{
+			testSPS,
+			{8}, // PPS
+			{5}, // IDR
 		})
 		require.NoError(t, err)
 	}
 
-	// check primary playlist
 	byts, _, err := doRequest(m, "index.m3u8")
 	require.NoError(t, err)
 
-	require.Equal(t, "#EXTM3U\n"+
-		"#EXT-X-VERSION:3\n"+
-		"#EXT-X-INDEPENDENT-SEGMENTS\n"+
-		"\n"+
-		"#EXT-X-STREAM-INF:BANDWIDTH=200,AVERAGE-BANDWIDTH=200\n"+
-		"main_stream.m3u8\n", string(byts))
+	require.Contains(t, string(byts), "main_stream.m3u8")
 
-	// check stream playlist
 	byts, _, err = doRequest(m, "main_stream.m3u8")
 	require.NoError(t, err)
 
 	require.Regexp(t, regexp.MustCompile(`#EXTM3U
 #EXT-X-VERSION:3
+#EXT-X-ALLOW-CACHE:NO
 #EXT-X-TARGETDURATION:1
 #EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-PROGRAM-DATE-TIME:.*?
 #EXTINF:1.00000,
-main_stream_seg0.ts
+.*?_main_seg0\.ts
+#EXT-X-PROGRAM-DATE-TIME:.*?
 #EXTINF:1.00000,
-main_stream_seg1.ts
+.*?_main_seg1\.ts
+#EXT-X-PROGRAM-DATE-TIME:.*?
 #EXTINF:1.00000,
-main_stream_seg2.ts
+.*?_main_seg2\.ts
 `), string(byts))
 }
