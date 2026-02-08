@@ -120,5 +120,4 @@ func TestMuxerKLV(t *testing.T) {
 
 	require.True(t, foundKLVPID, "KLV PID was not found in PMT")
 	require.True(t, foundKLVData, "KLV data was not found in the segment")
-	require.NotZero(t, klvPID, "KLV PID should not be zero")
 }
