@@ -328,11 +328,9 @@ func (m *Muxer) Start() error {
 			leadingTrackIndex = i
 			break
 		}
-		if leadingTrackIndex == -1 {
-			_, isKLV := track.Codec.(*codecs.KLV)
-			if !isKLV {
-				leadingTrackIndex = i
-			}
+		_, isKLV := track.Codec.(*codecs.KLV)
+		if leadingTrackIndex == -1 && !isKLV {
+			leadingTrackIndex = i
 		}
 	}
 
