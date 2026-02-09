@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bluenviron/gohlslib/v2/pkg/codecs"
+	"github.com/bluenviron/gohlslib/v2/pkg/playlist"
 )
 
 func TestMuxerKLV(t *testing.T) {
@@ -53,6 +54,30 @@ func TestMuxerKLV(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Contains(t, string(byts), "main_stream.m3u8")
+
+	// Parse the multivariant playlist to verify CODECS attribute remains valid with KLV
+	var mvPlaylist playlist.Multivariant
+	err = mvPlaylist.Unmarshal(byts)
+	require.NoError(t, err, "Failed to parse multivariant playlist")
+
+	// Verify that we have at least one variant
+	require.NotEmpty(t, mvPlaylist.Variants, "Expected at least one variant in multivariant playlist")
+
+	// Verify CODECS attribute is well-formed and doesn't contain empty strings
+	for _, variant := range mvPlaylist.Variants {
+		require.NotEmpty(t, variant.Codecs, "CODECS attribute should not be empty")
+		for _, codec := range variant.Codecs {
+			require.NotEmpty(t, codec, "CODECS attribute should not contain empty strings")
+		}
+	}
+
+	// Verify the marshaled playlist doesn't have malformed CODECS
+	marshaled, err := mvPlaylist.Marshal()
+	require.NoError(t, err)
+	marshaledStr := string(marshaled)
+	require.NotContains(t, marshaledStr, "CODECS=\",", "CODECS should not start with a comma")
+	require.NotContains(t, marshaledStr, ",,", "CODECS should not contain double commas")
+	require.NotContains(t, marshaledStr, ",\"", "CODECS should not end with a comma before closing quote")
 
 	byts, _, err = doRequest(m, "main_stream.m3u8")
 	require.NoError(t, err)
